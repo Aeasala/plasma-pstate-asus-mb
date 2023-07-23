@@ -139,7 +139,7 @@ GridLayout {
             return
         }
 
-        if (main.hasNativeBackend) {
+        if (main.hasNativeBackend()) {
             profileView.initialize()
         }
 
@@ -203,41 +203,47 @@ GridLayout {
         editMode = false
     }
 
+    function findHeaderItem(id) {
+        var headerItem = undefined
+        model.forEach(m => {
+            if (!headerItem && m['id'] === id) {
+                headerItem = m
+            }
+        })
+        return headerItem
+    }
+
     function show_item(itemId) {
+        main.sensorsMgr.clearActiveSensors()
+
         if (itemId === "profilePage") {
             if (currentItemId !== itemId) {
                 stackView.clear(StackView.PopTransition)
                 stackView.push(profileView, StackView.PushTransition)
                 currentItemId = itemId
-            }
-            set_indicator_position(currentItemId)
 
+                set_indicator_position(currentItemId)
+
+                main.monitorDS.stop()
+            }
             return
         }
 
-        var item = undefined
-        model.forEach(m => {
-            if (!item && m['id'] === itemId) {
-                item = m
-            }
-        })
-        if (!item) {
-            print("error: Couldn't find item with id=" + itemId)
+        var headerItem = findHeaderItem(itemId)
+        if (!headerItem) {
+            print("error: Couldn't find header with id=" + itemId)
             return
         }
 
-
-        var props = {'props': item, showIcon: false};
-        if (currentItemId && currentItemId === itemId) {
-            // clicking on the same item reloads it
-            stackView.pop(StackView.Immediate)
-            stackView.push(scrollComponent, props, StackView.Immediate)
-        }
+        var props = {'props': headerItem, showIcon: false};
 
         stackView.clear(StackView.PopTransition)
         stackView.push(scrollComponent, props, StackView.PushTransition)
         tabbedRepresentation.currentItemId = itemId
         set_indicator_position(currentItemId)
+
+        main.monitorDS.activeSensorsChanged()
+        main.monitorDS.restart()
     }
 
     Component.onCompleted: {
@@ -280,7 +286,8 @@ GridLayout {
 
                     Loader {
                         id: profileButton
-                        sourceComponent: main.hasNativeBackend ? toolButton : undefined
+                        sourceComponent: main.hasNativeBackend() ?
+                                            toolButton : undefined
                         onLoaded: {
                             item.symbolText = /* Black Star */ "\u2605"
                             item.itemId = "profilePage"

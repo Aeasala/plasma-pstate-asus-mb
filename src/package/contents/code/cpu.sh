@@ -1,10 +1,37 @@
 #!/bin/bash
 
+
+BASEDIR=$(dirname "$0")
+# shellcheck disable=SC1091
+source "${BASEDIR}"/cpu-hotplug.sh
+
+
 CPUFREQ_EPP="${CPUFREQ}/energy_performance_preference"
 
 
 CPUFREQ_SCALING_MIN_FREQ=${CPUFREQ}/scaling_min_freq
 CPUFREQ_SCALING_MAX_FREQ=${CPUFREQ}/scaling_max_freq
+
+INTEL_PSTATE=/sys/devices/system/cpu/intel_pstate
+AMD_CPB=/sys/devices/system/cpu/cpufreq/policy0/cpb
+CPU_BOOST=/sys/devices/system/cpu/cpufreq/boost
+
+CPU_SMT="${SYSFSCPU}/smt"
+
+if [ -f $CPU_BOOST ]; then
+    CPU_TURBO=$CPU_BOOST
+    CPU_TURBO_ON="1"
+    CPU_TURBO_OFF="0"
+elif [ -f $INTEL_PSTATE/no_turbo ]; then
+    CPU_TURBO=$INTEL_PSTATE/no_turbo
+    CPU_TURBO_ON="0"
+    CPU_TURBO_OFF="1"
+elif [ -f $AMD_CPB ]; then
+    CPU_TURBO=$AMD_CPB
+    CPU_TURBO_ON="1"
+    CPU_TURBO_OFF="0"
+fi
+
 
 check_cpu_governor () {
     [ -f /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor ]
@@ -100,6 +127,101 @@ set_cpufreq_scaling_max_freq() {
     read_cpufreq_scaling_max_freq
     json="{"
     json="${json}\"cpufreq_scaling_max_freq\":\"${cpufreq_scaling_max_freq}\""
+    json="${json}}"
+    echo "$json"
+}
+
+check_cpu_turbo () {
+    [ -n "$CPU_TURBO" ] && [ -f $CPU_TURBO ]
+}
+
+read_cpu_turbo () {
+    cpu_turbo=$(cat $CPU_TURBO)
+    if [ "$cpu_turbo" = "$CPU_TURBO_OFF" ]; then
+        cpu_turbo="false"
+    else
+        cpu_turbo="true"
+    fi
+}
+
+append_cpu_turbo() {
+    check_cpu_turbo || return 1
+    read_cpu_turbo
+    append_json "\"cpu_turbo\":\"${cpu_turbo}\""
+}
+
+set_cpu_turbo () {
+    turbo=$1
+    if [ -n "$turbo" ]; then
+        if [ "$turbo" = "true" ]; then
+            printf "%s" "$CPU_TURBO_ON\n" > $CPU_TURBO 2> /dev/null
+        else
+            printf "%s" "$CPU_TURBO_OFF\n" > $CPU_TURBO 2> /dev/null
+        fi
+    fi
+    read_cpu_turbo
+    json="{"
+    json="${json}\"cpu_turbo\":\"${cpu_turbo}\""
+    json="${json}}"
+    echo "$json"
+}
+
+check_cpu_cores_possible() {
+    NPHYSICAL=$(get_n_physical_cores)
+    [ "${NPHYSICAL}" -gt 1 ]
+}
+
+read_cpu_cores_possible() {
+    cpu_cores_possible="$(get_n_physical_cores)"
+    export cpu_cores_possible
+}
+
+# set_cpu_cores_possible() {
+
+# }
+
+check_cpu_cores_online() {
+    NPOSSIBLE=$(get_n_possible_cores)
+    [ "${NPOSSIBLE}" -gt 1 ]
+}
+
+read_cpu_cores_online() {
+    cpu_cores_online=$(get_n_cores_online)
+}
+
+set_cpu_cores_online() {
+    set_cores_online "$1"
+    read_cpu_cores_online
+    json="{"
+    json="${json}\"cpu_cores_online\":\"${cpu_cores_online}\""
+    json="${json}}"
+    echo "$json"
+}
+
+check_cpu_smt() {
+    have_smt
+}
+
+read_cpu_smt() {
+    if is_smt_on; then
+        cpu_smt="true"
+    else
+        cpu_smt="false"
+    fi
+}
+
+set_cpu_smt() {
+    smt=$1
+    if [ -n "$smt" ]; then
+        if [ "$smt" = "true" ]; then
+            printf "on\n" > "${CPU_SMT}/control" 2> /dev/null
+        else
+            printf "off\n" > "${CPU_SMT}/control" 2> /dev/null
+        fi
+    fi
+    read_cpu_smt
+    json="{"
+    json="${json}\"cpu_smt\":\"${cpu_smt}\""
     json="${json}}"
     echo "$json"
 }

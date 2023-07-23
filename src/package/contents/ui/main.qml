@@ -43,7 +43,15 @@ Item {
 
     property bool editMode: false
 
-    property bool hasNativeBackend: plasmoid.nativeInterface.isReady !== undefined
+
+    readonly property var datasourceBackend: 0
+    readonly property var mockBackend: 1
+    readonly property var nativeBackend: 2
+
+    // property int backendType: mockBackend
+    property int backendType: plasmoid.nativeInterface.isReady !== undefined ?
+                                nativeBackend : datasourceBackend
+
 
     readonly property string set_prefs: '/usr/share/plasma/plasmoids/' +
                                         'gr.ictpro.jsalatas.plasma.pstate/contents/code/' +
@@ -52,11 +60,6 @@ Item {
     property int pollingInterval: plasmoid.configuration.pollingInterval ?
                                   (plasmoid.configuration.pollingInterval * 1000) : 2000
     property int slowPollingInterval: (plasmoid.configuration.slowPollingInterval * 1000)
-
-    function sensor_short_name(long_name) {
-        var parts = long_name.split('/');
-        return parts[parts.length - 1];
-    }
 
     Plasmoid.compactRepresentation: CompactRepresentation { }
     // Plasmoid.fullRepresentation: FullRepresentation { }
@@ -83,6 +86,9 @@ Item {
 
     property var sensorsMgr
 
+    property var activeSensorsBackup: []
+    property var activeTraySensors: ['gpu_cur_freq']
+
 
     Component {
         id: sensorsMgrComponent
@@ -102,14 +108,15 @@ Item {
 
         function onBeginStageOne() {
             sensorsMgr.loadSensors()
-            if (main.hasNativeBackend) {
+            if (main.hasNativeBackend()) {
                 nativeBackendInit.init(firstInit.scriptReady)
+            } else if (main.hasMockBackend()) {
+                main.monitorDS.init()
             }
         }
 
         function onBeginStageTwo() {
-            if (main.hasNativeBackend) {
-                firstInit.initialized.connect(monitorDS.dataSourceReady)
+            if (main.hasNativeBackend()) {
                 main.monitorDS.init()
             }
         }
@@ -117,7 +124,7 @@ Item {
 
     NativeBackend.Init {
         id: nativeBackendInit
-        hasNativeBackend: main.hasNativeBackend
+        hasNativeBackend: main.hasNativeBackend()
     }
 
     Component.onCompleted: {
@@ -127,8 +134,20 @@ Item {
                   (plasmoid.parent.objectName === 'taskItemContainer'))
     }
 
+    function hasMockBackend() {
+        return main.backendType === mockBackend
+    }
+
+    function hasNativeBackend() {
+        return main.backendType === nativeBackend
+    }
+
+    function hasDataSourceBackend() {
+        return main.backendType === datasourceBackend
+    }
+
     function initialized() {
-        plasmoid.configuration.hasNativeBackend = hasNativeBackend
+        plasmoid.configuration.hasNativeBackend = hasNativeBackend()
 
         main.updateSensor.connect(prefsManager.updateSensor)
         prefsManager.update.connect(updater.update)
@@ -161,6 +180,9 @@ Item {
         if (main.tabbedRep.show_item) {
             main.tabbedRep.show_item("processorSettings")
         }
+
+        main.activeSensorsBackup = sensorsMgr.activeSensors
+        main.expandedChanged()
     }
 
     function enterEditMode() {
@@ -256,7 +278,7 @@ Item {
         }
 
         onNewData: {
-            var source_short_name = sensor_short_name(sourceName);
+            var source_short_name = Utils.sensor_short_name(sourceName);
 
             if(source_short_name.startsWith('fan')) {
                 var sensorModel = sensorsMgr.getSensor('fan_speeds')
@@ -336,24 +358,35 @@ Item {
         }
     }
 
+    function expandedChanged() {
+        if (!main.isInitialized) {
+            return
+        }
+
+        stopMonitors()
+
+        if (plasmoid.expanded) {
+            setMonitorInterval(pollingInterval)
+
+            sensorsMgr.activeSensors = main.activeSensorsBackup
+            monitorDS.activeSensorsChanged()
+        } else {
+            setMonitorInterval(slowPollingInterval)
+
+            main.activeSensorsBackup = sensorsMgr.activeSensors
+            sensorsMgr.activeSensors = main.activeTraySensors
+            monitorDS.activeSensorsChanged()
+        }
+
+        if (shouldMonitor()) {
+            startMonitors()
+        }
+    }
+
     Connections {
         target: plasmoid
         function onExpandedChanged() {
-            if (!main.isInitialized) {
-                return
-            }
-
-            stopMonitors()
-
-            if (plasmoid.expanded) {
-                setMonitorInterval(pollingInterval)
-            } else {
-                setMonitorInterval(slowPollingInterval)
-            }
-
-            if (shouldMonitor()) {
-                startMonitors()
-            }
+            main.expandedChanged()
         }
     }
 
@@ -415,17 +448,20 @@ Item {
                 main.monitorDS = monitorLoader.item
                 monitorDS.handleReadResult
                     .connect(prefsManager.handleReadResult)
-                if (hasNativeBackend) {
+                if (main.hasNativeBackend()) {
                     monitorDS.handleReadAvailResult
                         .connect(prefsManager.handleReadAvailResult)
                     monitorDS.handleSetValueResult
                         .connect(prefsManager.handleSetValueResult)
+                } else if (main.hasMockBackend()) {
+                    monitorDS.handleReadAvailResult
+                        .connect(prefsManager.handleReadAvailResult)
                 }
                 firstInit.monitorReady()
             }
         }
         Component.onCompleted: {
-            if (hasNativeBackend) {
+            if (main.hasNativeBackend()) {
                 var native_src = "./NativeBackend/Monitor.qml"
                 var native_props = {
                     interval: main.pollingInterval,
@@ -434,13 +470,16 @@ Item {
                     triggeredOnStart: true,
                 }
                 monitorLoader.setSource(native_src, native_props);
-            } else {
+            } else if (main.hasDataSourceBackend()) {
                 var local_src = "./DataSourceBackend/Monitor.qml"
                 var local_props = {
                     set_prefs: main.set_prefs,
                     pollingInterval: main.pollingInterval
                 }
                 monitorLoader.setSource(local_src, local_props);
+            } else if (main.hasMockBackend()) {
+                var mock_src = "./MockBackend/Monitor.qml"
+                monitorLoader.setSource(mock_src);
             }
         }
     }
@@ -451,7 +490,9 @@ Item {
             onLoaded: {
                 print("updaterLoader: loaded " + updaterLoader.item.name)
                 main.updater = updaterLoader.item
-                if (!main.hasNativeBackend) {
+                if (main.hasDataSourceBackend() ||
+                    main.hasMockBackend())
+                {
                     main.updater.handleSetValueResult
                         .connect(prefsManager.handleSetValueResult)
 
@@ -460,17 +501,20 @@ Item {
             }
         }
         Component.onCompleted: {
-            if (hasNativeBackend) {
+            if (main.hasNativeBackend()) {
                 var native_src = "./NativeBackend/Updater.qml"
                 var native_props = {
                 }
                 updaterLoader.setSource(native_src, native_props);
-            } else {
+            } else if (hasDataSourceBackend()) {
                 var local_src = "./DataSourceBackend/Updater.qml"
                 var local_props = {
                     set_prefs: main.set_prefs,
                 }
                 updaterLoader.setSource(local_src, local_props);
+            } else if (main.hasMockBackend()) {
+                var mock_src = "./MockBackend/Updater.qml"
+                updaterLoader.setSource(mock_src);
             }
         }
     }
@@ -485,8 +529,7 @@ Item {
             }
         }
         Component.onCompleted: {
-            if (hasNativeBackend) {
-            } else {
+            if (main.hasDataSourceBackend()) {
                 var local_src = "./DataSourceBackend/AvailableValues.qml"
                 var local_props = { set_prefs: main.set_prefs, }
                 availableValuesLoader.setSource(local_src, local_props);
@@ -565,23 +608,27 @@ Item {
 
         var toolTipSubText ='';
         var txt = '';
+        var font = "Plasma pstate Manager"
 
         toolTipSubText += '<font size="4"><table>'
 
         toolTipSubText += '<tr>'
         toolTipSubText += '<td style="text-align: right;">'
-        toolTipSubText += '<span style="font-family: Plasma pstate Manager;"><font size="5">d</font></span>'
+        toolTipSubText += '<span style="font-family: ' + font + ';">'
+        toolTipSubText += '<font size="5">d</font></span>'
         toolTipSubText += '</td>'
         toolTipSubText += '<td style="text-align: left;">'
         toolTipSubText += '<span>&nbsp;&nbsp;' + loadText +'</span>'
         toolTipSubText += '</td>'
         toolTipSubText += '</tr>'
 
-        txt = Utils.get_sensors_text(['battery_percentage', 'battery_remaining_time']);
+        txt = Utils.get_sensors_text(
+            ['battery_percentage', 'battery_remaining_time']);
         if(txt != 'N/A') {
             toolTipSubText += '<tr>'
             toolTipSubText += '<td style="text-align: center;">'
-            toolTipSubText += '<span style="font-family: Plasma pstate Manager;"><font size="5">h</font></span>'
+            toolTipSubText += '<span style="font-family: ' + font + ';">'
+            toolTipSubText += '<font size="5">h</font></span>'
             toolTipSubText += '</td>'
             toolTipSubText += '<td style="text-align: left;">'
             toolTipSubText += '<span>&nbsp;&nbsp;'+ txt +'</span>'
@@ -593,7 +640,8 @@ Item {
         if (txt != 'N/A') {
             toolTipSubText += '<tr>'
             toolTipSubText += '<td style="text-align: center;">'
-            toolTipSubText += '<span style="font-family: Plasma pstate Manager;"><font size="5">b</font></span>'
+            toolTipSubText += '<span style="font-family: ' + font + ';">'
+            toolTipSubText += '<font size="5">b</font></span>'
             toolTipSubText += '</td>'
             toolTipSubText += '<td style="text-align: left;">'
             toolTipSubText += '<span>&nbsp;&nbsp;'+ txt +'</span>'

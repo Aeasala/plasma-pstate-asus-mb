@@ -99,6 +99,9 @@ var sensors = {
 
     'cpufreq_scaling_min_freq': {'value': undefined, 'unit':' MHz', 'print': hz_to_mhz},
     'cpufreq_scaling_max_freq': {'value': undefined, 'unit':' MHz', 'print': hz_to_mhz},
+    'cpu_smt': {'value': undefined, 'unit':'', 'print': to_bool},
+    'cpu_cores_possible': {'value': undefined, 'unit':'', 'print': to_int},
+    'cpu_cores_online': {'value': undefined, 'unit':'', 'print': to_int},
 }
 
 var available_values = {
@@ -119,7 +122,17 @@ var model =  [
             {'type': 'group', 'text': 'CPU Frequencies', 'items' :[
                 {'type': 'slider', 'text': 'Min perf', 'min': 0, 'max': 100, 'sensor': 'cpu_min_perf'},
                 {'type': 'slider', 'text': 'Max perf', 'min': 0, 'max': 100, 'sensor': 'cpu_max_perf'},
-                {'type': 'switch', 'text': 'Turbo', 'sensor': 'cpu_turbo'}
+                {'type': 'combobox', 'text': 'Min freq', 'sensor': 'cpufreq_scaling_min_freq',
+                    'items' : undefined, 'available_values': 'cpu_scaling_available_frequencies'
+                },
+                {'type': 'combobox', 'text': 'Max freq', 'sensor': 'cpufreq_scaling_max_freq',
+                    'items' : undefined, 'available_values': 'cpu_scaling_available_frequencies'
+                },
+                {'type': 'switch', 'text': 'Turbo', 'sensor': 'cpu_turbo'},
+            ]},
+            {'type': 'group', 'text': 'CPU Hot Plug', 'items' :[
+                {'type': 'slider', 'text': 'Cores online', 'min': 1, 'max': 'cpu_cores_possible', 'sensor': 'cpu_cores_online'},
+                {'type': 'switch', 'text': 'SMT', 'sensor': 'cpu_smt'}
             ]},
             {'type': 'group', 'text': 'GPU Frequencies', 'visible': 'showIntelGPU', 'items' :[
                 {'type': 'slider', 'text': 'Min freq', 'min': 'gpu_min_limit', 'max': 'gpu_max_limit', 'sensor': 'gpu_min_freq'},
@@ -134,14 +147,6 @@ var model =  [
                 {'symbol': 'k', 'text': "Schedutil", 'sensor_value': 'schedutil'},
                 {'symbol': 'f', 'text': "Conservative", 'sensor_value': 'conservative'}
             ]},
-            {'type': 'group', 'text': 'CPU Frequencies', 'items' :[
-                {'type': 'combobox', 'text': 'Min freq', 'sensor': 'cpufreq_scaling_min_freq',
-                    'items' : undefined, 'available_values': 'cpu_scaling_available_frequencies'
-                },
-                {'type': 'combobox', 'text': 'Max freq', 'sensor': 'cpufreq_scaling_max_freq',
-                    'items' : undefined, 'available_values': 'cpu_scaling_available_frequencies'
-                },
-            ]}
 
         ]
     },
@@ -258,17 +263,6 @@ function sensor_has_value(item) {
     var sensorNames = main.sensorsMgr.getKeys()
 
     if (item.type === 'header') {
-        if (item.sensors) {
-            for (var i = item.sensors.length - 1; i >= 0; i--) {
-                var sensor = item.sensors[i]
-                if (sensorNames.includes(sensor) && (main.sensorsMgr.hasKey(sensor) &&
-                    !!main.sensorsMgr.getSensor(sensor).value))
-                {
-                    return true
-                }
-            }
-        }
-
         for (var i = item.items.length - 1; i >= 0; i--) {
             if (sensor_has_value(item.items[i])) {
                 return true
@@ -335,6 +329,11 @@ function get_sensors_text(sensors) {
     }
 
     return res || 'N/A';
+}
+
+function sensor_short_name(long_name) {
+    var parts = long_name.split('/');
+    return parts[parts.length - 1];
 }
 
 function deepCopy(p, c) {
