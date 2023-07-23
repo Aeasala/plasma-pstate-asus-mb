@@ -1,7 +1,6 @@
 # Intel P-state and CPUFreq Manager Widget
 
 ## What it is
-this is a test commit from dolphins git integration
 Intel P-state and CPUFreq Manager is a KDE Plasma widget in order to control 
 the frequencies of Intel CPUs and their integrated GPUs for any modern Intel 
 Processors running in 
